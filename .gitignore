@@ -23,3 +23,6 @@ Thumbs.db
 deploy/.env
 deploy/.deploy-state
 deploy/.app.generated.yaml
+
+# GitHub publish secrets
+scripts/github.env

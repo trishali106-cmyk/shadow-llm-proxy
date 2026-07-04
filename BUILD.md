@@ -249,52 +249,76 @@ docker run -p 8080:8080 shadow-llm-proxy
 
 ## Publish to Git
 
-The project is already initialized locally on branch `main` with an initial commit.
+The project auto-publishes to GitHub via `scripts/publish-to-github.sh` and a Cursor `stop` hook.
 
-### Option A — Create a new GitHub repo and push (GitHub CLI)
+### One-time GitHub authentication
+
+Pick one:
 
 ```bash
-# One-time login
 gh auth login
-
-# Create public repo and push
-gh repo create shadow-llm-proxy --public --source=. --remote=origin --push \
-  --description "Java 21 Spring Boot LLM shadow proxy with async candidate comparison"
 ```
 
-Use `--private` instead of `--public` for a private repository.
-
-### Option B — Push to an existing GitHub repo
+Or set a token (required for non-interactive agent/hook publish):
 
 ```bash
-git remote add origin https://github.com/YOUR_USER/shadow-llm-proxy.git
-git push -u origin main
+export GH_TOKEN=ghp_your_token_here
 ```
 
-### Option C — First-time setup from scratch (if git is not initialized)
+Optional config file (gitignored):
 
 ```bash
-git init -b main
-git add -A
-git commit -m "Initial commit: shadow LLM proxy service."
-git remote add origin https://github.com/YOUR_USER/shadow-llm-proxy.git
-git push -u origin main
+cp scripts/github.env.example scripts/github.env
+# edit scripts/github.env, then:
+set -a && source scripts/github.env && set +a
 ```
+
+### Manual publish (create repo or push updates)
+
+```bash
+chmod +x scripts/publish-to-github.sh .cursor/hooks/publish-to-github.sh
+./scripts/publish-to-github.sh
+```
+
+The script will:
+
+1. Auto-commit uncommitted changes (respecting `.gitignore`)
+2. **Create** `https://github.com/<you>/shadow-llm-proxy` if it does not exist
+3. **Push** to `origin` if the repo or remote already exists
+
+### Automatic agent publish
+
+- **Cursor rule:** `.cursor/rules/github-auto-publish.mdc` tells the agent to publish after implementation work
+- **Cursor hook:** `.cursor/hooks.json` runs publish on agent `stop`
+- **Hook log:** `/tmp/shadow-llm-proxy-publish.log`
+
+### Environment overrides
+
+| Variable | Default |
+|----------|---------|
+| `GITHUB_REPO_NAME` | `shadow-llm-proxy` |
+| `GITHUB_REPO_VISIBILITY` | `public` |
+| `GITHUB_BRANCH` | `main` |
+| `GITHUB_OWNER` | autodetected from `gh api user` |
+| `AUTO_COMMIT` | `true` |
+| `COMMIT_MESSAGE` | auto-generated timestamped message |
 
 ### Verify publish
 
 ```bash
-git status
 git remote -v
 git log --oneline -3
+gh repo view --web
 ```
 
-### What is excluded from git
+### Legacy manual options
 
-`.gitignore` excludes build artifacts and local-only files:
+```bash
+gh repo create shadow-llm-proxy --public --source=. --remote=origin --push
+```
 
-- `build/`
-- `.gradle/`
-- `.gradle-local/`
-- `deploy/.env` (secrets)
+```bash
+git remote add origin https://github.com/YOUR_USER/shadow-llm-proxy.git
+git push -u origin main
+```
 

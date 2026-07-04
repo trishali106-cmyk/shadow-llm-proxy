@@ -1,0 +1,53 @@
+---
+description: Auto-publish project changes to GitHub after implementation work
+alwaysApply: true
+---
+
+# GitHub auto-publish
+
+When you finish implementation tasks in this repository, publish changes to GitHub before ending the turn when the user has asked for automatic publishing or when meaningful code/docs changes were made.
+
+## Publish command
+
+```bash
+./scripts/publish-to-github.sh
+```
+
+## Behavior
+
+- Creates `https://github.com/<owner>/shadow-llm-proxy` if it does not exist
+- Pushes to `origin` if the repository or remote already exists
+- Auto-commits uncommitted tracked/untracked files (respecting `.gitignore`) before push
+
+## Authentication (required once)
+
+Either:
+
+```bash
+gh auth login
+```
+
+Or set a token:
+
+```bash
+export GH_TOKEN=ghp_your_token_here
+```
+
+## Optional environment variables
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `GITHUB_REPO_NAME` | `shadow-llm-proxy` | Repository name |
+| `GITHUB_REPO_VISIBILITY` | `public` | `public` or `private` |
+| `GITHUB_BRANCH` | `main` | Branch to push |
+| `GITHUB_OWNER` | autodetected | GitHub username/org |
+| `AUTO_COMMIT` | `true` | Commit local changes before push |
+| `COMMIT_MESSAGE` | auto-generated | Custom commit message |
+
+## Cursor hook
+
+A `stop` hook in `.cursor/hooks.json` also runs publish automatically when an agent session ends. Check `/tmp/shadow-llm-proxy-publish.log` if publish fails silently.
+
+## On failure
+
+If publish fails due to missing auth, tell the user to run `gh auth login` or set `GH_TOKEN`, then rerun `./scripts/publish-to-github.sh`.
