@@ -7,7 +7,12 @@ import java.net.UnknownHostException;
 import java.util.UUID;
 
 /**
- * Stable identifier for the running container/process, exposed in {@code GET /metrics}.
+ * Stable identifier for the running container or process.
+ *
+ * <p>Exposed as {@code instance_id} in {@code GET /metrics} so operators can tell which replica
+ * served a snapshot when counters are per-instance ({@code scope: "instance"}).
+ *
+ * <p>Resolution order: {@code HOSTNAME} env → {@code INSTANCE_ID} env → local hostname → random UUID.
  */
 @Component
 public class InstanceIdentity {
@@ -32,6 +37,7 @@ public class InstanceIdentity {
         this.instanceId = hostname;
     }
 
+    /** Container hostname or fallback identifier for this JVM. */
     public String getInstanceId() {
         return instanceId;
     }

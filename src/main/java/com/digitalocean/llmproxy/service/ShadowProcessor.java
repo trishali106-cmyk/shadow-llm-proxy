@@ -19,7 +19,17 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeoutException;
 
 /**
- * Asynchronous shadow processor with sampling, concurrency limits, and circuit-breaker protection.
+ * Asynchronous shadow processor with probabilistic sampling, concurrency limits, and circuit-breaker protection.
+ *
+ * <p>Runs on {@code shadowTaskExecutor} virtual threads. Before invoking the candidate:
+ * <ol>
+ *   <li>Checks {@code llm.shadow.enabled}</li>
+ *   <li>Applies {@code llm.shadow.sample-rate} — skipped requests increment {@code shadow_skipped}
+ *       (10% in {@code prod} profile, 100% in {@code mock})</li>
+ *   <li>Enforces {@code llm.shadow.max-concurrency} — excess work increments {@code shadow_dropped}</li>
+ * </ol>
+ *
+ * <p>Candidate failures are isolated; they never affect the primary response already returned to the client.
  */
 @Slf4j
 @Service

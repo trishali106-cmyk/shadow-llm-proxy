@@ -43,5 +43,11 @@ public record LlmProperties(
 
     public record Mock(long primaryDelayMs, long candidateDelayMs) {}
 
+    /**
+     * @param enabled when false, shadow work is not scheduled
+     * @param sampleRate fraction of requests that run shadow comparison ({@code 0.0}–{@code 1.0});
+     *                   prod profile defaults to {@code 0.1}
+     * @param maxConcurrency maximum concurrent shadow tasks; excess increments {@code shadow_dropped}
+     */
     public record Shadow(boolean enabled, double sampleRate, int maxConcurrency) {}
 }

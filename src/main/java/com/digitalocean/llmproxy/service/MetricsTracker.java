@@ -9,8 +9,14 @@ import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.stereotype.Component;
 
 /**
- * Thread-safe shadow metrics with Micrometer counters and a legacy JSON snapshot for {@code GET /metrics}.
- * Counters are backed by {@link CounterStore}; use {@code metrics.store=redis} for cluster-wide totals.
+ * Thread-safe shadow metrics with Micrometer counters and a JSON snapshot for {@code GET /metrics}.
+ *
+ * <p>Counters are backed by {@link com.digitalocean.llmproxy.metrics.CounterStore}:
+ * in-memory by default, or Redis when {@code metrics.store=redis}. Micrometer counters are
+ * also registered for {@code /actuator/prometheus}.
+ *
+ * <p>Match rate is computed as {@code matches / (matches + mismatches)}; skipped and dropped
+ * requests are tracked separately and do not affect the rate.
  */
 @Component
 public class MetricsTracker {

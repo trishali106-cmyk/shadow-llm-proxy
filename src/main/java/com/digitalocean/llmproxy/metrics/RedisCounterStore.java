@@ -4,6 +4,13 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
+/**
+ * Cluster-wide counter storage backed by Redis {@code INCR}.
+ *
+ * <p>Active when {@code metrics.store=redis}. Requires {@code REDIS_HOST}, {@code REDIS_PORT},
+ * and optionally {@code REDIS_PASSWORD}. {@code GET /metrics} returns {@code scope: "cluster"}
+ * with totals aggregated across all App Platform instances.
+ */
 @Component
 @ConditionalOnProperty(name = "metrics.store", havingValue = "redis")
 public class RedisCounterStore implements CounterStore {

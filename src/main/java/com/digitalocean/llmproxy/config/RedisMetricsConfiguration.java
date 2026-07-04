@@ -13,7 +13,10 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.util.StringUtils;
 
 /**
- * Wires Redis only when cluster-wide metrics storage is enabled.
+ * Wires Redis connection beans only when cluster-wide metrics storage is enabled.
+ *
+ * <p>Activated by {@code metrics.store=redis}. Uses {@code spring.data.redis.*} properties
+ * populated from {@code REDIS_HOST}, {@code REDIS_PORT}, and {@code REDIS_PASSWORD}.
  */
 @Configuration
 @ConditionalOnProperty(name = "metrics.store", havingValue = "redis")

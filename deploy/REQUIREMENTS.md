@@ -72,7 +72,7 @@ No GitHub connection needed for this path.
 | `LLM_CANDIDATE_URL` | mock endpoint | Production candidate LLM URL |
 | `LLM_SHADOW_ENABLED` | `true` | Enable/disable shadow traffic |
 | `LLM_SHADOW_SAMPLE_RATE` | `0.1` (prod) | Fraction of requests shadowed; `1.0` for demos |
-| `SPRING_PROFILES_ACTIVE` | `prod` (agent) | Spring profile; controls sampling and security |
+| `SPRING_PROFILES_ACTIVE` | `mock` (default) | Set `prod` for 10% sampling and API-key security |
 | `METRICS_STORE` | `redis` (agent) | `memory` (per instance) or `redis` (cluster totals) |
 | `PROXY_API_KEY` | — | API key for `/generate` and `/metrics` in prod |
 

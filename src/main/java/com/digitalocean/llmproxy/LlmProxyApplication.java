@@ -12,6 +12,10 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 
 /**
  * Spring Boot entry point for the shadow LLM proxy service.
+ *
+ * <p>Redis auto-configuration is excluded by default and enabled selectively via
+ * {@link com.digitalocean.llmproxy.config.RedisMetricsConfiguration} when
+ * {@code metrics.store=redis}.
  */
 @SpringBootApplication(exclude = {
         RedisAutoConfiguration.class,
