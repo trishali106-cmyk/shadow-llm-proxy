@@ -244,3 +244,57 @@ java -jar build/libs/shadow-llm-proxy-1.0.0.jar
 docker build -t shadow-llm-proxy .
 docker run -p 8080:8080 shadow-llm-proxy
 ```
+
+---
+
+## Publish to Git
+
+The project is already initialized locally on branch `main` with an initial commit.
+
+### Option A — Create a new GitHub repo and push (GitHub CLI)
+
+```bash
+# One-time login
+gh auth login
+
+# Create public repo and push
+gh repo create shadow-llm-proxy --public --source=. --remote=origin --push \
+  --description "Java 21 Spring Boot LLM shadow proxy with async candidate comparison"
+```
+
+Use `--private` instead of `--public` for a private repository.
+
+### Option B — Push to an existing GitHub repo
+
+```bash
+git remote add origin https://github.com/YOUR_USER/shadow-llm-proxy.git
+git push -u origin main
+```
+
+### Option C — First-time setup from scratch (if git is not initialized)
+
+```bash
+git init -b main
+git add -A
+git commit -m "Initial commit: shadow LLM proxy service."
+git remote add origin https://github.com/YOUR_USER/shadow-llm-proxy.git
+git push -u origin main
+```
+
+### Verify publish
+
+```bash
+git status
+git remote -v
+git log --oneline -3
+```
+
+### What is excluded from git
+
+`.gitignore` excludes build artifacts and local-only files:
+
+- `build/`
+- `.gradle/`
+- `.gradle-local/`
+- `deploy/.env` (secrets)
+
