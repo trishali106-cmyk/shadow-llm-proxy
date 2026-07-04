@@ -1,0 +1,10 @@
+security:
+  enabled: false
+
+rate-limit:
+  enabled: false
+
+logging:
+  level:
+    com.digitalocean.llmproxy.service.ProxyOrchestrator: DEBUG
+    com.digitalocean.llmproxy.service.ShadowProcessor: DEBUG

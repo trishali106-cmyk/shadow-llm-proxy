@@ -15,6 +15,17 @@ public record MetricsSnapshot(
         @JsonProperty("candidate_failures")
         long candidateFailures,
 
+        @JsonProperty("shadow_dropped")
+        long shadowDropped,
+
+        @JsonProperty("shadow_skipped")
+        long shadowSkipped,
+
         @JsonProperty("real_time_match_rate")
-        double realTimeMatchRate
+        double realTimeMatchRate,
+
+        @JsonProperty("instance_id")
+        String instanceId,
+
+        String scope
 ) {}

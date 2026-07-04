@@ -3,20 +3,24 @@ package com.digitalocean.llmproxy.util;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import org.springframework.stereotype.Component;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.regex.Pattern;
 
 /**
  * Normalizes raw LLM text and JSON before shadow comparison.
- * Strips formatting noise (whitespace, case, markdown blocks, key order) to reduce false mismatches.
  */
-public final class OutputNormalizer {
+@Component
+public class OutputNormalizer {
 
     private static final Pattern MARKDOWN_JSON_BLOCK = Pattern.compile(
             "```(?:json)?\\s*([\\s\\S]*?)```",
@@ -24,17 +28,19 @@ public final class OutputNormalizer {
     );
     private static final Pattern TRAILING_PUNCTUATION = Pattern.compile("[\\s.,!?;:\"'\\-–—]+$");
     private static final Pattern WHITESPACE = Pattern.compile("\\s+");
+    private static final int PREVIEW_MAX_LENGTH = 100;
 
-    private static final ObjectMapper CANONICAL_MAPPER = new ObjectMapper()
-            .configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true);
+    private final ObjectMapper objectMapper;
 
-    private OutputNormalizer() {}
+    public OutputNormalizer(ObjectMapper objectMapper) {
+        this.objectMapper = objectMapper;
+    }
 
-    public static boolean normalizeAndCompare(String primaryRaw, String candidateRaw) {
+    public boolean normalizeAndCompare(String primaryRaw, String candidateRaw) {
         return normalize(primaryRaw).equals(normalize(candidateRaw));
     }
 
-    public static String normalize(String raw) {
+    public String normalize(String raw) {
         if (raw == null || raw.isBlank()) {
             return "";
         }
@@ -51,13 +57,37 @@ public final class OutputNormalizer {
         return lowercaseAndStripTrailingPunctuation(text);
     }
 
-    static String extractContent(String raw) {
+    public String preview(String raw) {
+        if (raw == null) {
+            return "";
+        }
+        String collapsed = collapseWhitespace(raw);
+        if (collapsed.length() <= PREVIEW_MAX_LENGTH) {
+            return collapsed;
+        }
+        return collapsed.substring(0, PREVIEW_MAX_LENGTH) + "...";
+    }
+
+    public String sha256(String raw) {
+        if (raw == null) {
+            raw = "";
+        }
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(raw.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(hash);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 not available", e);
+        }
+    }
+
+    String extractContent(String raw) {
         String trimmed = raw.trim();
         if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
             return trimmed;
         }
         try {
-            JsonNode root = CANONICAL_MAPPER.readTree(trimmed);
+            JsonNode root = objectMapper.readTree(trimmed);
             JsonNode choices = root.path("choices");
             if (choices.isArray() && !choices.isEmpty()) {
                 JsonNode message = choices.get(0).path("message").path("content");
@@ -79,7 +109,7 @@ public final class OutputNormalizer {
         }
     }
 
-    static String stripMarkdownJsonBlocks(String text) {
+    String stripMarkdownJsonBlocks(String text) {
         var matcher = MARKDOWN_JSON_BLOCK.matcher(text);
         if (matcher.find()) {
             return matcher.group(1).trim();
@@ -87,14 +117,14 @@ public final class OutputNormalizer {
         return text.trim();
     }
 
-    static String tryCanonicalizeJson(String text) {
+    String tryCanonicalizeJson(String text) {
         String candidate = text.trim();
         if (!looksLikeJson(candidate)) {
             return candidate;
         }
         try {
-            JsonNode node = CANONICAL_MAPPER.readTree(candidate);
-            return CANONICAL_MAPPER.writeValueAsString(sortKeysRecursively(node));
+            JsonNode node = objectMapper.readTree(candidate);
+            return objectMapper.writeValueAsString(sortKeysRecursively(node));
         } catch (JsonProcessingException e) {
             return candidate;
         }
@@ -105,7 +135,7 @@ public final class OutputNormalizer {
                 || (text.startsWith("[") && text.endsWith("]"));
     }
 
-    static JsonNode sortKeysRecursively(JsonNode node) {
+    JsonNode sortKeysRecursively(JsonNode node) {
         if (node.isObject()) {
             ObjectNode sorted = JsonNodeFactory.instance.objectNode();
             List<String> fieldNames = new ArrayList<>();

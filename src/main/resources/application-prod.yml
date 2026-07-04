@@ -1,0 +1,16 @@
+metrics:
+  store: ${METRICS_STORE:memory}
+
+logging:
+  level:
+    com.digitalocean.llmproxy: INFO
+
+llm:
+  shadow:
+    sample-rate: 0.1
+
+security:
+  enabled: true
+
+rate-limit:
+  requests-per-minute: 60

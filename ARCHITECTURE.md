@@ -553,5 +553,7 @@ Dockerfile                           # Multi-stage Java 21 container
 ## Related Documents
 
 - [README.md](README.md) — Quick start and API examples
+- [BUILD.md](BUILD.md) — Build, test, run, and command reference
+- [GITHUB_PUBLISH.md](GITHUB_PUBLISH.md) — GitHub auto-publish setup and troubleshooting
 - [DEPLOY.md](DEPLOY.md) — DigitalOcean deployment guide
 - [AgentInstructions.md](AgentInstructions.md) — Original system requirements specification

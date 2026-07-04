@@ -2,6 +2,7 @@ plugins {
     id 'java'
     id 'org.springframework.boot' version '3.3.5'
     id 'io.spring.dependency-management' version '1.1.6'
+    id 'org.owasp.dependencycheck' version '11.1.0'
 }
 
 group = 'com.digitalocean'
@@ -17,10 +18,25 @@ repositories {
     mavenCentral()
 }
 
+ext {
+    set('springdocVersion', '2.6.0')
+    set('resilience4jVersion', '2.2.0')
+    set('bucket4jVersion', '8.10.1')
+}
+
 dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-web'
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
     implementation 'org.springframework.boot:spring-boot-starter-validation'
+    implementation 'org.springframework.boot:spring-boot-starter-security'
+    implementation 'org.apache.httpcomponents.client5:httpclient5'
+
+    implementation "org.springdoc:springdoc-openapi-starter-webmvc-ui:${springdocVersion}"
+    implementation "io.github.resilience4j:resilience4j-spring-boot3:${resilience4jVersion}"
+    implementation "com.bucket4j:bucket4j-core:${bucket4jVersion}"
+    implementation 'org.springframework.boot:spring-boot-starter-data-redis'
+
+    runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
 
     compileOnly 'org.projectlombok:lombok'
     annotationProcessor 'org.projectlombok:lombok'
@@ -29,8 +45,18 @@ dependencies {
     testAnnotationProcessor 'org.projectlombok:lombok'
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'org.springframework.security:spring-security-test'
+    testImplementation 'org.awaitility:awaitility:4.2.2'
 }
 
 tasks.named('test') {
     useJUnitPlatform()
+}
+
+dependencyCheck {
+    failBuildOnCVSS = 9.0f
+    suppressionFile = 'config/dependency-check-suppressions.xml'
+    analyzers {
+        assemblyEnabled = false
+    }
 }

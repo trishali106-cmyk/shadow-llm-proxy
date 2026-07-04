@@ -7,6 +7,8 @@ alwaysApply: true
 
 When you finish implementation tasks in this repository, publish changes to GitHub before ending the turn when the user has asked for automatic publishing or when meaningful code/docs changes were made.
 
+**Full setup guide:** [GITHUB_PUBLISH.md](../../GITHUB_PUBLISH.md)
+
 ## Publish command
 
 ```bash

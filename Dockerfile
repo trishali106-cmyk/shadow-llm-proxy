@@ -18,6 +18,7 @@ USER spring:spring
 COPY --from=build /app/build/libs/*.jar app.jar
 
 ENV PORT=8080
+ENV JAVA_OPTS="-XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0 -Djava.security.egd=file:/dev/./urandom"
 EXPOSE 8080
 
-ENTRYPOINT ["sh", "-c", "java -jar app.jar"]
+ENTRYPOINT ["sh", "-c", "exec java $JAVA_OPTS -jar app.jar"]

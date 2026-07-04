@@ -1,15 +1,28 @@
 package com.digitalocean.llmproxy;
 
+import com.digitalocean.llmproxy.config.LlmProperties;
+import com.digitalocean.llmproxy.config.MetricsProperties;
+import com.digitalocean.llmproxy.config.RateLimitProperties;
+import com.digitalocean.llmproxy.config.SecurityProperties;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.scheduling.annotation.EnableAsync;
+import org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration;
+import org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 
 /**
  * Spring Boot entry point for the shadow LLM proxy service.
- * Boots the application and enables asynchronous shadow processing.
  */
-@SpringBootApplication
-@EnableAsync
+@SpringBootApplication(exclude = {
+        RedisAutoConfiguration.class,
+        RedisRepositoriesAutoConfiguration.class
+})
+@EnableConfigurationProperties({
+        LlmProperties.class,
+        SecurityProperties.class,
+        RateLimitProperties.class,
+        MetricsProperties.class
+})
 public class LlmProxyApplication {
 
     public static void main(String[] args) {

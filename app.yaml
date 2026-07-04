@@ -5,6 +5,12 @@
 name: shadow-llm-proxy
 region: nyc
 
+databases:
+  - name: metrics-redis
+    engine: REDIS
+    version: "7"
+    production: true
+
 services:
   - name: api
     dockerfile_path: Dockerfile
@@ -33,6 +39,19 @@ services:
       - key: LLM_SHADOW_ENABLED
         value: "true"
         scope: RUN_TIME
+      - key: METRICS_STORE
+        value: "redis"
+        scope: RUN_TIME
+      - key: REDIS_HOST
+        value: ${metrics-redis.HOSTNAME}
+        scope: RUN_TIME
+      - key: REDIS_PORT
+        value: ${metrics-redis.PORT}
+        scope: RUN_TIME
+      - key: REDIS_PASSWORD
+        value: ${metrics-redis.PASSWORD}
+        scope: RUN_TIME
+        type: SECRET
 
     routes:
       - path: /

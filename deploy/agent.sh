@@ -93,9 +93,26 @@ ensure_git_repo() {
   fi
 }
 
+guard_example_env_file() {
+  local example_file="$SCRIPT_DIR/.env.example"
+  if [[ -f "$example_file" ]] && grep -qE '(dop_v1_[a-f0-9]{20,}|ghp_[A-Za-z0-9]{20,})' "$example_file"; then
+    fail "deploy/.env.example contains API tokens. Keep secrets in deploy/.env only (gitignored), then retry."
+  fi
+}
+
+github_repo_exists() {
+  local remote_url="$1"
+  if [[ -n "${GITHUB_TOKEN:-}" ]] && command -v gh >/dev/null 2>&1; then
+    GH_TOKEN="$GITHUB_TOKEN" gh repo view "$GITHUB_REPO" >/dev/null 2>&1
+    return $?
+  fi
+  git ls-remote "$remote_url" HEAD >/dev/null 2>&1
+}
+
 push_to_github() {
   cd "$PROJECT_ROOT"
   ensure_git_repo
+  guard_example_env_file
 
   local remote_url="https://github.com/${GITHUB_REPO}.git"
 
@@ -115,15 +132,28 @@ push_to_github() {
     git commit -m "Deploy agent: $(date -u +%Y-%m-%dT%H:%M:%SZ)" || true
   fi
 
-  if ! git push -u origin "$GITHUB_BRANCH" 2>/dev/null; then
-    if [[ -n "${GITHUB_TOKEN:-}" ]] && command -v gh >/dev/null 2>&1; then
-      warn "Push failed — attempting to create repo via gh..."
-      GH_TOKEN="$GITHUB_TOKEN" gh repo create "$GITHUB_REPO" --public --source=. --push
-    else
-      fail "Git push failed. Ensure GITHUB_REPO exists and GITHUB_TOKEN has repo scope, or create the repo manually."
+  local push_err=""
+  if push_err=$(git push -u origin "$GITHUB_BRANCH" 2>&1); then
+    ok "Code pushed to GitHub"
+    return 0
+  fi
+
+  if github_repo_exists "$remote_url"; then
+    warn "GitHub repo already exists — will not create a new repo."
+    echo "$push_err" >&2
+    fail "Git push failed. Fix the error above (often secret scanning or auth), then rerun ./deploy/agent.sh"
+  fi
+
+  if [[ -n "${GITHUB_TOKEN:-}" ]] && command -v gh >/dev/null 2>&1; then
+    warn "Repo not found — creating via gh..."
+    if GH_TOKEN="$GITHUB_TOKEN" gh repo create "$GITHUB_REPO" --public --source=. --remote origin --push; then
+      ok "Code pushed to GitHub"
+      return 0
     fi
   fi
-  ok "Code pushed to GitHub"
+
+  echo "$push_err" >&2
+  fail "Git push failed. Ensure GITHUB_REPO exists and GITHUB_TOKEN has repo scope, or create the repo manually."
 }
 
 # ---------------------------------------------------------------------------
@@ -133,6 +163,12 @@ generate_github_spec() {
   cat > "$GENERATED_SPEC" <<EOF
 name: ${DO_APP_NAME}
 region: ${DO_REGION}
+
+databases:
+  - name: metrics-redis
+    engine: REDIS
+    version: "7"
+    production: true
 
 services:
   - name: api
@@ -162,6 +198,19 @@ services:
       - key: LLM_SHADOW_ENABLED
         value: "${LLM_SHADOW_ENABLED:-true}"
         scope: RUN_TIME
+      - key: METRICS_STORE
+        value: "redis"
+        scope: RUN_TIME
+      - key: REDIS_HOST
+        value: \${metrics-redis.HOSTNAME}
+        scope: RUN_TIME
+      - key: REDIS_PORT
+        value: \${metrics-redis.PORT}
+        scope: RUN_TIME
+      - key: REDIS_PASSWORD
+        value: \${metrics-redis.PASSWORD}
+        scope: RUN_TIME
+        type: SECRET
 
     routes:
       - path: /
@@ -174,6 +223,12 @@ generate_registry_spec() {
   cat > "$GENERATED_SPEC" <<EOF
 name: ${DO_APP_NAME}
 region: ${DO_REGION}
+
+databases:
+  - name: metrics-redis
+    engine: REDIS
+    version: "7"
+    production: true
 
 services:
   - name: api
@@ -202,6 +257,19 @@ services:
       - key: LLM_SHADOW_ENABLED
         value: "${LLM_SHADOW_ENABLED:-true}"
         scope: RUN_TIME
+      - key: METRICS_STORE
+        value: "redis"
+        scope: RUN_TIME
+      - key: REDIS_HOST
+        value: \${metrics-redis.HOSTNAME}
+        scope: RUN_TIME
+      - key: REDIS_PORT
+        value: \${metrics-redis.PORT}
+        scope: RUN_TIME
+      - key: REDIS_PASSWORD
+        value: \${metrics-redis.PASSWORD}
+        scope: RUN_TIME
+        type: SECRET
 
     routes:
       - path: /
@@ -332,6 +400,11 @@ print_result() {
 # Commands
 # ---------------------------------------------------------------------------
 cmd_deploy() {
+  local skip_push=false
+  if [[ "${1:-}" == "--skip-push" ]]; then
+    skip_push=true
+  fi
+
   load_config
   validate_config
   check_do_auth
@@ -339,7 +412,11 @@ cmd_deploy() {
   if [[ "$DEPLOY_STRATEGY" == "github" ]]; then
     log "Strategy: GitHub → App Platform"
     warn "Ensure GitHub is connected to DigitalOcean: https://cloud.digitalocean.com/account/applications/github"
-    push_to_github
+    if [[ "$skip_push" == "true" ]]; then
+      warn "Skipping GitHub push (--skip-push). App Platform will use code already on GitHub."
+    else
+      push_to_github
+    fi
     generate_github_spec
   else
     log "Strategy: Container Registry → App Platform"
@@ -394,6 +471,7 @@ DigitalOcean Deploy Agent
 
 Usage:
   ./deploy/agent.sh              Deploy (or update) the app
+  ./deploy/agent.sh --skip-push  Update App Platform without pushing to GitHub
   ./deploy/agent.sh --status     Show deployment status and URL
   ./deploy/agent.sh --destroy    Delete the app from DigitalOcean
   ./deploy/agent.sh --help       Show this help
@@ -413,6 +491,7 @@ EOF
 main() {
   case "${1:-deploy}" in
     deploy|--deploy)     cmd_deploy ;;
+    --skip-push)         cmd_deploy --skip-push ;;
     --status|status)     cmd_status ;;
     --destroy|destroy)   cmd_destroy ;;
     --help|-h|help)      cmd_help ;;

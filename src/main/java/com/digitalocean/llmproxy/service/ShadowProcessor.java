@@ -1,34 +1,54 @@
 package com.digitalocean.llmproxy.service;
 
-import com.digitalocean.llmproxy.config.AsyncConfig.LlmTimingProperties;
+import com.digitalocean.llmproxy.config.AsyncConfig.ShadowConcurrencyLimiter;
+import com.digitalocean.llmproxy.config.LlmProperties;
 import com.digitalocean.llmproxy.model.LLMResponse;
 import com.digitalocean.llmproxy.model.MismatchLog;
 import com.digitalocean.llmproxy.model.PromptRequest;
 import com.digitalocean.llmproxy.util.OutputNormalizer;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import lombok.RequiredArgsConstructor;
+import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
+import io.github.resilience4j.circuitbreaker.CircuitBreaker;
+import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeoutException;
 
 /**
- * Asynchronous shadow processor that compares primary and candidate LLM outputs.
- * Runs on Java 21 virtual threads, decoupled from the servlet request so work continues
- * after the client receives the primary response; records matches, mismatches, and failures.
+ * Asynchronous shadow processor with sampling, concurrency limits, and circuit-breaker protection.
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class ShadowProcessor {
 
-    private static final ObjectMapper MISMATCH_LOG_MAPPER = new ObjectMapper();
-
-    private final LLMMockService llmMockService;
+    private final LlmUpstreamClient llmUpstreamClient;
     private final MetricsTracker metricsTracker;
-    private final LlmTimingProperties timing;
+    private final LlmProperties llmProperties;
+    private final OutputNormalizer outputNormalizer;
+    private final ObjectMapper objectMapper;
+    private final ShadowConcurrencyLimiter concurrencyLimiter;
+    private final CircuitBreaker candidateCircuitBreaker;
+
+    public ShadowProcessor(
+            LlmUpstreamClient llmUpstreamClient,
+            MetricsTracker metricsTracker,
+            LlmProperties llmProperties,
+            OutputNormalizer outputNormalizer,
+            ObjectMapper objectMapper,
+            ShadowConcurrencyLimiter concurrencyLimiter,
+            CircuitBreakerRegistry circuitBreakerRegistry) {
+        this.llmUpstreamClient = llmUpstreamClient;
+        this.metricsTracker = metricsTracker;
+        this.llmProperties = llmProperties;
+        this.outputNormalizer = outputNormalizer;
+        this.objectMapper = objectMapper;
+        this.concurrencyLimiter = concurrencyLimiter;
+        this.candidateCircuitBreaker = circuitBreakerRegistry.circuitBreaker("candidateLlm");
+    }
 
     @Async("shadowTaskExecutor")
     public void processShadow(String requestId, PromptRequest request, LLMResponse primaryResponse) {
@@ -38,48 +58,52 @@ public class ShadowProcessor {
                 Thread.currentThread().getName(),
                 System.currentTimeMillis());
 
-        if (!timing.shadowEnabled()) {
-            log.debug(
-                    "[shadow-debug] requestId={} phase=shadow-disabled thread={} ts={}",
-                    requestId,
-                    Thread.currentThread().getName(),
-                    System.currentTimeMillis());
+        if (!llmProperties.shadow().enabled()) {
+            log.debug("[shadow-debug] requestId={} phase=shadow-disabled", requestId);
             return;
         }
 
-        metricsTracker.recordShadowRequest();
+        if (ThreadLocalRandom.current().nextDouble() >= llmProperties.shadow().sampleRate()) {
+            metricsTracker.recordShadowSkipped();
+            log.debug("[shadow-debug] requestId={} phase=shadow-skipped-by-sampling", requestId);
+            return;
+        }
 
+        if (!concurrencyLimiter.tryAcquire()) {
+            metricsTracker.recordShadowDropped();
+            log.warn("Shadow work dropped due to concurrency limit requestId={}", requestId);
+            return;
+        }
+
+        try {
+            metricsTracker.recordShadowRequest();
+            invokeCandidateAndCompare(requestId, request, primaryResponse);
+        } finally {
+            concurrencyLimiter.release();
+        }
+    }
+
+    private void invokeCandidateAndCompare(String requestId, PromptRequest request, LLMResponse primaryResponse) {
         LLMResponse candidateResponse;
         try {
+            log.debug("[shadow-debug] requestId={} phase=candidate-call-start", requestId);
+            candidateResponse = candidateCircuitBreaker.executeCallable(
+                    () -> llmUpstreamClient.generateCandidate(requestId, request));
             log.debug(
-                    "[shadow-debug] requestId={} phase=candidate-call-start thread={} ts={}",
+                    "[shadow-debug] requestId={} phase=candidate-call-complete candidateLatencyMs={} model={}",
                     requestId,
-                    Thread.currentThread().getName(),
-                    System.currentTimeMillis());
-            candidateResponse = llmMockService.generateCandidate(requestId, request);
-            log.debug(
-                    "[shadow-debug] requestId={} phase=candidate-call-complete thread={} candidateLatencyMs={} model={} ts={}",
-                    requestId,
-                    Thread.currentThread().getName(),
                     candidateResponse.latencyMs(),
-                    candidateResponse.model(),
-                    System.currentTimeMillis());
+                    candidateResponse.model());
+        } catch (CallNotPermittedException e) {
+            log.warn("Candidate circuit breaker open requestId={}", requestId);
+            metricsTracker.recordCandidateFailure();
+            return;
         } catch (TimeoutException e) {
             log.warn("Candidate LLM timed out requestId={}: {}", requestId, e.getMessage());
-            log.debug(
-                    "[shadow-debug] requestId={} phase=candidate-timeout thread={} ts={}",
-                    requestId,
-                    Thread.currentThread().getName(),
-                    System.currentTimeMillis());
             metricsTracker.recordCandidateFailure();
             return;
         } catch (Exception e) {
             log.warn("Candidate LLM failed requestId={}: {}", requestId, e.getMessage());
-            log.debug(
-                    "[shadow-debug] requestId={} phase=candidate-failure thread={} ts={}",
-                    requestId,
-                    Thread.currentThread().getName(),
-                    System.currentTimeMillis());
             metricsTracker.recordCandidateFailure();
             return;
         }
@@ -88,43 +112,35 @@ public class ShadowProcessor {
     }
 
     void normalizeAndCompare(String requestId, String primaryContent, String candidateContent) {
-        if (OutputNormalizer.normalizeAndCompare(primaryContent, candidateContent)) {
+        if (outputNormalizer.normalizeAndCompare(primaryContent, candidateContent)) {
             metricsTracker.recordMatch();
-            log.debug(
-                    "[shadow-debug] requestId={} phase=compare-complete thread={} matched=true ts={}",
-                    requestId,
-                    Thread.currentThread().getName(),
-                    System.currentTimeMillis());
+            log.debug("[shadow-debug] requestId={} phase=compare-complete matched=true", requestId);
             return;
         }
 
         metricsTracker.recordMismatch();
-        log.debug(
-                "[shadow-debug] requestId={} phase=compare-complete thread={} matched=false ts={}",
-                requestId,
-                Thread.currentThread().getName(),
-                System.currentTimeMillis());
+        log.debug("[shadow-debug] requestId={} phase=compare-complete matched=false", requestId);
         logMismatch(requestId, primaryContent, candidateContent);
     }
 
     private void logMismatch(String requestId, String primaryContent, String candidateContent) {
         MismatchLog mismatch = new MismatchLog(
                 requestId,
-                OutputNormalizer.normalize(primaryContent),
-                OutputNormalizer.normalize(candidateContent),
-                primaryContent,
-                candidateContent
+                outputNormalizer.normalize(primaryContent),
+                outputNormalizer.normalize(candidateContent),
+                outputNormalizer.preview(primaryContent),
+                outputNormalizer.preview(candidateContent),
+                outputNormalizer.sha256(primaryContent),
+                outputNormalizer.sha256(candidateContent),
+                primaryContent == null ? 0 : primaryContent.length(),
+                candidateContent == null ? 0 : candidateContent.length()
         );
 
         try {
-            log.warn("Shadow mismatch payload={}", MISMATCH_LOG_MAPPER.writeValueAsString(mismatch));
+            log.warn("Shadow mismatch payload={}", objectMapper.writeValueAsString(mismatch));
         } catch (JsonProcessingException e) {
-            log.warn(
-                    "Shadow mismatch requestId={} normalizedPrimary={} normalizedCandidate={}",
-                    mismatch.requestId(),
-                    mismatch.normalizedPrimary(),
-                    mismatch.normalizedCandidate()
-            );
+            log.warn("Shadow mismatch requestId={} normalizedPrimary={} normalizedCandidate={}",
+                    mismatch.requestId(), mismatch.normalizedPrimary(), mismatch.normalizedCandidate());
         }
     }
 }

@@ -1,34 +1,82 @@
 server:
   port: ${PORT:8080}
+  shutdown: graceful
 
 spring:
   application:
     name: shadow-llm-proxy
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:mock}
   threads:
     virtual:
       enabled: true
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
+  data:
+    redis:
+      host: ${REDIS_HOST:}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      ssl:
+        enabled: ${REDIS_SSL:false}
+
+metrics:
+  store: ${METRICS_STORE:memory}
 
 llm:
-  mock:
-    primary-delay-ms: 100
-    candidate-delay-ms: 500
+  primary:
+    url: ${LLM_PRIMARY_URL:http://127.0.0.1:8080/internal/mock/primary}
+  candidate:
+    url: ${LLM_CANDIDATE_URL:http://127.0.0.1:8080/internal/mock/candidate}
+  api-key: ${LLM_API_KEY:}
   timeout:
     primary-ms: 500
     candidate-ms: 2000
+  mock:
+    primary-delay-ms: 100
+    candidate-delay-ms: 500
   shadow:
     enabled: true
+    sample-rate: 1.0
+    max-concurrency: 100
+
+security:
+  enabled: true
+  api-key: ${PROXY_API_KEY:}
+  permit-health: true
+
+rate-limit:
+  enabled: true
+  requests-per-minute: 120
 
 logging:
   level:
     com.digitalocean.llmproxy: INFO
-    com.digitalocean.llmproxy.service.ProxyOrchestrator: DEBUG
-    com.digitalocean.llmproxy.service.ShadowProcessor: DEBUG
 
 management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,prometheus
   endpoint:
     health:
       show-details: when_authorized
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
+resilience4j:
+  circuitbreaker:
+    instances:
+      candidateLlm:
+        sliding-window-size: 20
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 30s
+        permitted-number-of-calls-in-half-open-state: 5
+        automatic-transition-from-open-to-half-open-enabled: true
+
+springdoc:
+  api-docs:
+    path: /api-docs
+  swagger-ui:
+    path: /swagger-ui.html

@@ -151,6 +151,17 @@ cp deploy/.env.example deploy/.env
 
 See [deploy/REQUIREMENTS.md](deploy/REQUIREMENTS.md) and [DEPLOY.md](DEPLOY.md).
 
+## Publish to GitHub
+
+Auto-publish creates the GitHub repo if missing, or pushes updates. See **[GITHUB_PUBLISH.md](GITHUB_PUBLISH.md)** for the full setup guide.
+
+```bash
+gh auth login
+./scripts/publish-to-github.sh
+```
+
+Build/run commands: [BUILD.md](BUILD.md). Architecture: [ARCHITECTURE.md](ARCHITECTURE.md).
+
 ## API Reference
 
 ### `POST /generate`

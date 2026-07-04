@@ -54,6 +54,11 @@ jobs:
             cat > deploy/.app.generated.yaml <<SPEC
           name: shadow-llm-proxy
           region: ${{ vars.DO_REGION || 'nyc' }}
+          databases:
+            - name: metrics-redis
+              engine: REDIS
+              version: "7"
+              production: true
           services:
             - name: api
               dockerfile_path: Dockerfile
@@ -72,6 +77,30 @@ jobs:
                 - key: PORT
                   value: "8080"
                   scope: RUN_TIME
+                - key: SPRING_PROFILES_ACTIVE
+                  value: "prod"
+                  scope: RUN_TIME
+                - key: METRICS_STORE
+                  value: "redis"
+                  scope: RUN_TIME
+                - key: REDIS_HOST
+                  value: \${metrics-redis.HOSTNAME}
+                  scope: RUN_TIME
+                - key: REDIS_PORT
+                  value: \${metrics-redis.PORT}
+                  scope: RUN_TIME
+                - key: REDIS_PASSWORD
+                  value: \${metrics-redis.PASSWORD}
+                  scope: RUN_TIME
+                  type: SECRET
+                - key: PROXY_API_KEY
+                  value: "${{ secrets.PROXY_API_KEY }}"
+                  scope: RUN_TIME
+                  type: SECRET
+                - key: LLM_API_KEY
+                  value: "${{ secrets.LLM_API_KEY }}"
+                  scope: RUN_TIME
+                  type: SECRET
                 - key: LLM_PRIMARY_URL
                   value: "${{ vars.LLM_PRIMARY_URL || 'http://127.0.0.1:8080/mock/primary/v1/chat/completions' }}"
                   scope: RUN_TIME

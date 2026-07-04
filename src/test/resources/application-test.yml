@@ -1,0 +1,14 @@
+security:
+  enabled: false
+
+rate-limit:
+  enabled: false
+
+llm:
+  shadow:
+    sample-rate: 1.0
+    max-concurrency: 50
+
+logging:
+  level:
+    com.digitalocean.llmproxy: WARN

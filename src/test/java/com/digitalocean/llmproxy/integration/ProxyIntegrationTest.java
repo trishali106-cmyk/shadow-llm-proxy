@@ -1,5 +1,6 @@
 package com.digitalocean.llmproxy.integration;
 
+import org.awaitility.Awaitility;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -9,6 +10,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.test.context.ActiveProfiles;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -18,9 +20,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * End-to-end integration tests for the proxy API using a live Spring Boot context.
- * Verifies latency, shadow metrics, mismatch tracking, and validation behavior.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@ActiveProfiles({"mock", "test"})
 class ProxyIntegrationTest {
 
     @Autowired
@@ -51,32 +53,41 @@ class ProxyIntegrationTest {
     }
 
     @Test
-    void metrics_reflectsShadowComparisonAfterBackgroundProcessing() throws Exception {
+    void metrics_reflectsShadowComparisonAfterBackgroundProcessing() {
         postGenerate(Map.of("prompt", "metrics test"));
 
-        Thread.sleep(800);
-
-        ResponseEntity<Map> metrics = restTemplate.getForEntity("/metrics", Map.class);
-        assertThat(metrics.getStatusCode()).isEqualTo(HttpStatus.OK);
-        assertThat(((Number) metrics.getBody().get("total_shadow_requests")).intValue()).isGreaterThanOrEqualTo(1);
-        assertThat(metrics.getBody()).containsKey("real_time_match_rate");
+        Awaitility.await()
+                .atMost(Duration.ofSeconds(5))
+                .pollInterval(Duration.ofMillis(100))
+                .untilAsserted(() -> {
+                    ResponseEntity<Map> metrics = restTemplate.getForEntity("/metrics", Map.class);
+                    assertThat(metrics.getStatusCode()).isEqualTo(HttpStatus.OK);
+                    assertThat(((Number) metrics.getBody().get("total_shadow_requests")).intValue())
+                            .isGreaterThanOrEqualTo(1);
+                    assertThat(metrics.getBody()).containsKey("real_time_match_rate");
+                    assertThat(metrics.getBody()).containsKey("instance_id");
+                    assertThat(metrics.getBody().get("scope")).isEqualTo("instance");
+                });
     }
 
     @Test
-    void forcedMismatchIsTrackedInMetrics() throws Exception {
+    void forcedMismatchIsTrackedInMetrics() {
         postGenerate(Map.of(
                 "prompt", "mismatch test",
                 "force_mismatch", true
         ));
 
-        Thread.sleep(800);
-
-        ResponseEntity<Map> metrics = restTemplate.getForEntity("/metrics", Map.class);
-        assertThat(((Number) metrics.getBody().get("mismatches")).intValue()).isGreaterThanOrEqualTo(1);
+        Awaitility.await()
+                .atMost(Duration.ofSeconds(5))
+                .pollInterval(Duration.ofMillis(100))
+                .untilAsserted(() -> {
+                    ResponseEntity<Map> metrics = restTemplate.getForEntity("/metrics", Map.class);
+                    assertThat(((Number) metrics.getBody().get("mismatches")).intValue()).isGreaterThanOrEqualTo(1);
+                });
     }
 
     @Test
-    void candidateFailureDoesNotAffectPrimaryResponse() throws Exception {
+    void candidateFailureDoesNotAffectPrimaryResponse() {
         ResponseEntity<Map> response = postGenerate(Map.of(
                 "prompt", "failure test",
                 "simulate_candidate_failure", true
@@ -85,10 +96,14 @@ class ProxyIntegrationTest {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(response.getBody().get("content")).isEqualTo("Answer: failure test");
 
-        Thread.sleep(800);
-
-        ResponseEntity<Map> metrics = restTemplate.getForEntity("/metrics", Map.class);
-        assertThat(((Number) metrics.getBody().get("candidate_failures")).intValue()).isGreaterThanOrEqualTo(1);
+        Awaitility.await()
+                .atMost(Duration.ofSeconds(5))
+                .pollInterval(Duration.ofMillis(100))
+                .untilAsserted(() -> {
+                    ResponseEntity<Map> metrics = restTemplate.getForEntity("/metrics", Map.class);
+                    assertThat(((Number) metrics.getBody().get("candidate_failures")).intValue())
+                            .isGreaterThanOrEqualTo(1);
+                });
     }
 
     @Test

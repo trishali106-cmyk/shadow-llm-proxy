@@ -1,45 +1,66 @@
 package com.digitalocean.llmproxy.config;
 
-import org.springframework.beans.factory.annotation.Value;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.aop.interceptor.AsyncUncaughtExceptionHandler;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.task.VirtualThreadTaskExecutor;
+import org.springframework.scheduling.annotation.AsyncConfigurer;
 import org.springframework.scheduling.annotation.EnableAsync;
 
+import java.lang.reflect.Method;
 import java.util.concurrent.Executor;
+import java.util.concurrent.Semaphore;
 
 /**
- * Async and timing configuration for shadow processing.
- * Defines the virtual-thread executor, mock delay/timeout properties, and shadow enable flag.
+ * Async configuration: virtual-thread executor, shadow concurrency limiter, and uncaught handler.
  */
+@Slf4j
 @Configuration
 @EnableAsync
-public class AsyncConfig {
+public class AsyncConfig implements AsyncConfigurer {
 
-    /**
-     * Java 21 virtual threads for shadow processing — lightweight, decoupled from servlet threads,
-     * and survives client disconnect because work is scheduled before the response is flushed.
-     */
     @Bean(name = "shadowTaskExecutor")
-    public Executor shadowTaskExecutor() {
+    Executor shadowTaskExecutor() {
         return new VirtualThreadTaskExecutor("shadow-vt-");
     }
 
     @Bean
-    LlmTimingProperties llmTimingProperties(
-            @Value("${llm.mock.primary-delay-ms:100}") long primaryDelayMs,
-            @Value("${llm.mock.candidate-delay-ms:500}") long candidateDelayMs,
-            @Value("${llm.timeout.primary-ms:500}") long primaryTimeoutMs,
-            @Value("${llm.timeout.candidate-ms:2000}") long candidateTimeoutMs,
-            @Value("${llm.shadow.enabled:true}") boolean shadowEnabled) {
-        return new LlmTimingProperties(primaryDelayMs, candidateDelayMs, primaryTimeoutMs, candidateTimeoutMs, shadowEnabled);
+    ShadowConcurrencyLimiter shadowConcurrencyLimiter(LlmProperties llmProperties) {
+        return new ShadowConcurrencyLimiter(llmProperties.shadow().maxConcurrency());
     }
 
-    public record LlmTimingProperties(
-            long primaryDelayMs,
-            long candidateDelayMs,
-            long primaryTimeoutMs,
-            long candidateTimeoutMs,
-            boolean shadowEnabled
-    ) {}
+    @Override
+    public AsyncUncaughtExceptionHandler getAsyncUncaughtExceptionHandler() {
+        return new LoggingAsyncUncaughtExceptionHandler();
+    }
+
+    /**
+     * Limits concurrent in-flight shadow comparisons to protect upstream LLM capacity.
+     */
+    public static final class ShadowConcurrencyLimiter {
+
+        private final Semaphore semaphore;
+
+        public ShadowConcurrencyLimiter(int maxConcurrency) {
+            this.semaphore = new Semaphore(Math.max(1, maxConcurrency));
+        }
+
+        public boolean tryAcquire() {
+            return semaphore.tryAcquire();
+        }
+
+        public void release() {
+            semaphore.release();
+        }
+    }
+
+    private static final class LoggingAsyncUncaughtExceptionHandler implements AsyncUncaughtExceptionHandler {
+
+        @Override
+        public void handleUncaughtException(Throwable ex, Method method, Object... params) {
+            String requestId = params.length > 0 ? String.valueOf(params[0]) : "unknown";
+            log.error("Uncaught async error in {} requestId={}: {}", method.getName(), requestId, ex.getMessage(), ex);
+        }
+    }
 }

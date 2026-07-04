@@ -63,7 +63,8 @@ class ProxyControllerTest {
 
     @Test
     void metrics_returnsSnapshot() throws Exception {
-        when(metricsTracker.snapshot()).thenReturn(new MetricsSnapshot(5, 4, 1, 0, 80.0));
+        when(metricsTracker.snapshot()).thenReturn(
+                new MetricsSnapshot(5, 4, 1, 0, 0, 0, 80.0, "test-instance", "instance"));
 
         mockMvc.perform(get("/metrics"))
                 .andExpect(status().isOk())

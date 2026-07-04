@@ -1,6 +1,9 @@
 package com.digitalocean.llmproxy.service;
 
-import com.digitalocean.llmproxy.config.AsyncConfig.LlmTimingProperties;
+import com.digitalocean.llmproxy.config.LlmProperties;
+import com.digitalocean.llmproxy.util.OutputNormalizer;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -9,7 +12,6 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
 
 /**
  * Unit tests for {@link ShadowProcessor} output comparison and metrics recording.
@@ -24,8 +26,17 @@ class ShadowProcessorTest {
 
     @BeforeEach
     void setUp() {
-        shadowProcessor = new ShadowProcessor(null, metricsTracker,
-                new LlmTimingProperties(100, 500, 500, 2000, true));
+        LlmProperties properties = new LlmProperties(null, null, "", null, null,
+                new LlmProperties.Shadow(true, 1.0, 100));
+        OutputNormalizer normalizer = new OutputNormalizer(new ObjectMapper());
+        shadowProcessor = new ShadowProcessor(
+                null,
+                metricsTracker,
+                properties,
+                normalizer,
+                new ObjectMapper(),
+                new com.digitalocean.llmproxy.config.AsyncConfig.ShadowConcurrencyLimiter(100),
+                CircuitBreakerRegistry.ofDefaults());
     }
 
     @Test
