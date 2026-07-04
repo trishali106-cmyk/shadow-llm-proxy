@@ -173,7 +173,47 @@ curl -s -X POST http://localhost:8080/generate \
 ### Metrics
 
 ```bash
-curl -s http://localhost:8080/metrics
+curl -s http://localhost:8080/metrics | jq .
+```
+
+Example response (local, single instance):
+
+```json
+{
+  "total_shadow_requests": 3,
+  "matches": 3,
+  "mismatches": 0,
+  "candidate_failures": 0,
+  "shadow_dropped": 0,
+  "shadow_skipped": 0,
+  "real_time_match_rate": 100.0,
+  "instance_id": "localhost",
+  "scope": "instance"
+}
+```
+
+Counters update **after** background shadow work (~500 ms), not immediately after `/generate`:
+
+```bash
+curl -s -X POST http://localhost:8080/generate \
+  -H "Content-Type: application/json" \
+  -d '{"prompt":"metrics timing test"}'
+
+curl -s http://localhost:8080/metrics    # may not show match yet
+sleep 0.8
+curl -s http://localhost:8080/metrics    # matches updated
+```
+
+### Production-like local run
+
+```bash
+SPRING_PROFILES_ACTIVE=prod ./gradlew bootRun
+```
+
+Uses 10% shadow sampling and enables API-key security. For full shadow coverage locally:
+
+```bash
+SPRING_PROFILES_ACTIVE=prod LLM_SHADOW_SAMPLE_RATE=1.0 ./gradlew bootRun
 ```
 
 ### Test flags
@@ -211,6 +251,8 @@ Same command used in GitHub Actions:
 | `Permission denied` on gradlew | `chmod +x gradlew` |
 | Slow or stuck Gradle daemon | `./gradlew --stop` then rebuild |
 | Docker daemon not running | Start Docker Desktop / daemon, then retry `docker build` |
+| Metrics fluctuate on App Platform | Multiple instances with `metrics.store=memory`; use `./deploy/agent.sh` (Redis) or scale to 1 instance |
+| Metrics lower than `/generate` count | `prod` profile samples 10% of traffic; set `LLM_SHADOW_SAMPLE_RATE=1.0` for demos |
 | Need full architecture details | See [ARCHITECTURE.md](ARCHITECTURE.md) |
 | Need deployment steps | See [DEPLOY.md](DEPLOY.md) |
 

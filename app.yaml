@@ -1,15 +1,13 @@
 # DigitalOcean App Platform spec
 # Deploy: doctl apps create --spec app.yaml
 # Update: doctl apps update <app-id> --spec app.yaml
+#
+# Metrics use in-memory counters with instance_count: 1 (stable /metrics on a single container).
+# For multi-instance cluster metrics, attach a managed Redis cluster and set REDIS_CLUSTER_NAME
+# in deploy/.env before running ./deploy/agent.sh — see deploy/.env.example.
 
 name: shadow-llm-proxy
 region: nyc
-
-databases:
-  - name: metrics-redis
-    engine: REDIS
-    version: "7"
-    production: false
 
 services:
   - name: api
@@ -40,18 +38,8 @@ services:
         value: "true"
         scope: RUN_TIME
       - key: METRICS_STORE
-        value: "redis"
+        value: "memory"
         scope: RUN_TIME
-      - key: REDIS_HOST
-        value: ${metrics-redis.HOSTNAME}
-        scope: RUN_TIME
-      - key: REDIS_PORT
-        value: ${metrics-redis.PORT}
-        scope: RUN_TIME
-      - key: REDIS_PASSWORD
-        value: ${metrics-redis.PASSWORD}
-        scope: RUN_TIME
-        type: SECRET
 
     routes:
       - path: /

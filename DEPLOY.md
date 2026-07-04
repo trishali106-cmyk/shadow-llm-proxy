@@ -47,11 +47,23 @@ In the app settings, add these **Run Time** env vars:
 | Key | Value |
 |-----|-------|
 | `PORT` | `8080` |
-| `LLM_PRIMARY_URL` | `http://127.0.0.1:8080/mock/primary/v1/chat/completions` |
-| `LLM_CANDIDATE_URL` | `http://127.0.0.1:8080/mock/candidate/v1/chat/completions` |
+| `SPRING_PROFILES_ACTIVE` | `prod` |
+| `LLM_PRIMARY_URL` | `http://127.0.0.1:8080/internal/mock/primary` |
+| `LLM_CANDIDATE_URL` | `http://127.0.0.1:8080/internal/mock/candidate` |
 | `LLM_SHADOW_ENABLED` | `true` |
+| `PROXY_API_KEY` | *(secret)* API key for `/generate` and `/metrics` |
 
 The mock endpoints run inside the same container, so loopback (`127.0.0.1`) is correct.
+
+**Recommended:** Use `./deploy/agent.sh` instead of manual setup — it provisions a managed **Redis** database and sets `METRICS_STORE=redis` so `/metrics` returns cluster-wide totals across instances.
+
+Optional overrides:
+
+| Key | Default (prod) | Purpose |
+|-----|----------------|---------|
+| `METRICS_STORE` | `memory` (manual) / `redis` (agent) | Cluster-wide metrics aggregation |
+| `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD` | — | Required when `METRICS_STORE=redis` |
+| `LLM_SHADOW_SAMPLE_RATE` | `0.1` | Fraction of requests shadowed; set `1.0` for demos |
 
 For **real LLM endpoints** in production, replace the URLs:
 

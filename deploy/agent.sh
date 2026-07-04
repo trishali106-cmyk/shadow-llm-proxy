@@ -159,18 +159,52 @@ push_to_github() {
 # ---------------------------------------------------------------------------
 # Spec generation
 # ---------------------------------------------------------------------------
+metrics_env_block() {
+  if [[ -n "${REDIS_CLUSTER_NAME:-}" ]]; then
+    cat <<EOF
+      - key: METRICS_STORE
+        value: "redis"
+        scope: RUN_TIME
+      - key: REDIS_HOST
+        value: \${metrics-redis.HOSTNAME}
+        scope: RUN_TIME
+      - key: REDIS_PORT
+        value: \${metrics-redis.PORT}
+        scope: RUN_TIME
+      - key: REDIS_PASSWORD
+        value: \${metrics-redis.PASSWORD}
+        scope: RUN_TIME
+        type: SECRET
+EOF
+  else
+    cat <<EOF
+      - key: METRICS_STORE
+        value: "memory"
+        scope: RUN_TIME
+EOF
+  fi
+}
+
+database_block() {
+  if [[ -n "${REDIS_CLUSTER_NAME:-}" ]]; then
+    cat <<EOF
+databases:
+  - name: metrics-redis
+    engine: REDIS
+    version: "7"
+    production: true
+    cluster_name: ${REDIS_CLUSTER_NAME}
+
+EOF
+  fi
+}
+
 generate_github_spec() {
   cat > "$GENERATED_SPEC" <<EOF
 name: ${DO_APP_NAME}
 region: ${DO_REGION}
 
-databases:
-  - name: metrics-redis
-    engine: REDIS
-    version: "7"
-    production: false
-
-services:
+$(database_block)services:
   - name: api
     dockerfile_path: Dockerfile
     source_dir: /
@@ -198,24 +232,16 @@ services:
       - key: LLM_SHADOW_ENABLED
         value: "${LLM_SHADOW_ENABLED:-true}"
         scope: RUN_TIME
-      - key: METRICS_STORE
-        value: "redis"
-        scope: RUN_TIME
-      - key: REDIS_HOST
-        value: \${metrics-redis.HOSTNAME}
-        scope: RUN_TIME
-      - key: REDIS_PORT
-        value: \${metrics-redis.PORT}
-        scope: RUN_TIME
-      - key: REDIS_PASSWORD
-        value: \${metrics-redis.PASSWORD}
-        scope: RUN_TIME
-        type: SECRET
-
+$(metrics_env_block)
     routes:
       - path: /
 EOF
-  log "Generated App Platform spec: $GENERATED_SPEC"
+  if [[ -n "${REDIS_CLUSTER_NAME:-}" ]]; then
+    log "Generated App Platform spec with managed Redis cluster: ${REDIS_CLUSTER_NAME}"
+  else
+    log "Generated App Platform spec (single-instance in-memory metrics)"
+  fi
+  log "Spec file: $GENERATED_SPEC"
 }
 
 generate_registry_spec() {
@@ -224,13 +250,7 @@ generate_registry_spec() {
 name: ${DO_APP_NAME}
 region: ${DO_REGION}
 
-databases:
-  - name: metrics-redis
-    engine: REDIS
-    version: "7"
-    production: false
-
-services:
+$(database_block)services:
   - name: api
     image:
       registry_type: DOCR
@@ -257,20 +277,7 @@ services:
       - key: LLM_SHADOW_ENABLED
         value: "${LLM_SHADOW_ENABLED:-true}"
         scope: RUN_TIME
-      - key: METRICS_STORE
-        value: "redis"
-        scope: RUN_TIME
-      - key: REDIS_HOST
-        value: \${metrics-redis.HOSTNAME}
-        scope: RUN_TIME
-      - key: REDIS_PORT
-        value: \${metrics-redis.PORT}
-        scope: RUN_TIME
-      - key: REDIS_PASSWORD
-        value: \${metrics-redis.PASSWORD}
-        scope: RUN_TIME
-        type: SECRET
-
+$(metrics_env_block)
     routes:
       - path: /
 EOF

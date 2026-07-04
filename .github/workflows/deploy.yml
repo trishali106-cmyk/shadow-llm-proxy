@@ -54,11 +54,6 @@ jobs:
             cat > deploy/.app.generated.yaml <<SPEC
           name: shadow-llm-proxy
           region: ${{ vars.DO_REGION || 'nyc' }}
-          databases:
-            - name: metrics-redis
-              engine: REDIS
-              version: "7"
-              production: false
           services:
             - name: api
               dockerfile_path: Dockerfile
@@ -81,18 +76,8 @@ jobs:
                   value: "prod"
                   scope: RUN_TIME
                 - key: METRICS_STORE
-                  value: "redis"
+                  value: "memory"
                   scope: RUN_TIME
-                - key: REDIS_HOST
-                  value: \${metrics-redis.HOSTNAME}
-                  scope: RUN_TIME
-                - key: REDIS_PORT
-                  value: \${metrics-redis.PORT}
-                  scope: RUN_TIME
-                - key: REDIS_PASSWORD
-                  value: \${metrics-redis.PASSWORD}
-                  scope: RUN_TIME
-                  type: SECRET
                 - key: PROXY_API_KEY
                   value: "${{ secrets.PROXY_API_KEY }}"
                   scope: RUN_TIME

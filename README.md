@@ -74,8 +74,14 @@ src/main/java/com/digitalocean/llmproxy/
 ├── service/
 │   ├── LLMMockService.java       # Primary 100ms / Candidate 500ms simulation
 │   ├── ShadowProcessor.java      # Async shadow + normalizeAndCompare()
-│   ├── MetricsTracker.java       # Lock-free AtomicLong metrics
+│   ├── MetricsTracker.java       # CounterStore-backed shadow metrics
 │   └── ProxyOrchestrator.java    # Sync primary + fire-and-forget shadow
+├── metrics/
+│   ├── CounterStore.java         # Pluggable counter storage (memory or Redis)
+│   ├── InMemoryCounterStore.java
+│   └── RedisCounterStore.java
+├── support/
+│   └── InstanceIdentity.java     # Container hostname for /metrics instance_id
 └── util/
     └── OutputNormalizer.java     # Markdown strip, JSON canonicalization, text normalize
 ```
@@ -90,7 +96,9 @@ src/main/java/com/digitalocean/llmproxy/
 | Candidate failure isolation | Caught in `ShadowProcessor`; increments `candidate_failures` only |
 | External LLM calls | `RestClient` with 500ms primary / 2000ms candidate timeouts |
 | Normalization pipeline | Strip markdown, canonical JSON, collapse whitespace, lowercase, strip punctuation |
-| Thread-safe metrics | `AtomicLong` — no synchronized blocks |
+| Thread-safe metrics | `CounterStore` with lock-free in-memory or Redis cluster totals |
+| Production sampling | `prod` profile shadows ~10% of traffic (`llm.shadow.sample-rate: 0.1`) |
+| Multi-instance metrics | `scope: instance` per JVM by default; use `metrics.store=redis` for cluster totals |
 
 ## Normalization Pipeline
 
@@ -136,7 +144,21 @@ llm:
     candidate-ms: 2000   # Candidate shadow timeout budget
   shadow:
     enabled: true
+    sample-rate: 1.0       # 1.0 = shadow every request; prod profile uses 0.1
+
+metrics:
+  store: memory            # memory (per instance) or redis (cluster-wide)
 ```
+
+### Spring profiles
+
+| Profile | Use | Shadow sample rate | Security |
+|---------|-----|-------------------|----------|
+| `mock` (default locally) | Dev / integration | 100% | Disabled |
+| `prod` | App Platform / production | 10% | API key required |
+| `dev` | Verbose logging | Inherits base | Configurable |
+
+Override sample rate for demos: `LLM_SHADOW_SAMPLE_RATE=1.0` or `llm.shadow.sample-rate` in config.
 
 ## CI/CD
 
@@ -183,12 +205,28 @@ Build/run commands: [BUILD.md](BUILD.md). Architecture: [ARCHITECTURE.md](ARCHIT
 
 ### `GET /metrics`
 
+Returns shadow-comparison counters. Updates **after** background candidate work completes (~500 ms), not when `/generate` returns.
+
 ```json
 {
   "total_shadow_requests": 10,
   "matches": 8,
   "mismatches": 2,
   "candidate_failures": 0,
-  "real_time_match_rate": 80.0
+  "shadow_dropped": 0,
+  "shadow_skipped": 90,
+  "real_time_match_rate": 80.0,
+  "instance_id": "api-7f3a2b1c",
+  "scope": "instance"
 }
 ```
+
+| Field | Meaning |
+|-------|---------|
+| `total_shadow_requests` | Candidate invoked and compared |
+| `shadow_skipped` | Request passed sampling (`sample-rate` < 1.0) |
+| `shadow_dropped` | Concurrency limit reached; shadow not run |
+| `instance_id` | Hostname of the container that served this snapshot |
+| `scope` | `"instance"` (per-JVM counters) or `"cluster"` (Redis-backed totals) |
+
+**Behind a load balancer:** With `metrics.store=memory`, each instance keeps its own counters — repeated `GET /metrics` calls may return different values. Use `metrics.store=redis` (see [DEPLOY.md](DEPLOY.md)) or scale to one instance for consistent totals.

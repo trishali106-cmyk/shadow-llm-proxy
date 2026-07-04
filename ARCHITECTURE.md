@@ -84,7 +84,7 @@ flowchart TB
 | Build | Gradle |
 | HTTP client | Spring `RestClient` |
 | Async | `@Async` + `VirtualThreadTaskExecutor` |
-| Metrics | In-memory `AtomicLong` counters |
+| Metrics | `CounterStore` (in-memory or Redis) + Micrometer counters |
 | Container | Docker (Eclipse Temurin 21 Alpine) |
 
 ---
@@ -153,8 +153,8 @@ sequenceDiagram
 |-------|------|
 | `ProxyOrchestrator` | Coordinates sync primary path + fire-and-forget shadow scheduling |
 | `LLMMockService` | HTTP facade; two `RestClient` beans with separate timeouts |
-| `ShadowProcessor` | `@Async` shadow worker: candidate call, compare, metrics, mismatch logging |
-| `MetricsTracker` | Lock-free counters (`AtomicLong`) for shadow statistics |
+| `ShadowProcessor` | `@Async` shadow worker: sampling, candidate call, compare, metrics, mismatch logging |
+| `MetricsTracker` | Shadow statistics via `CounterStore`; exposes `MetricsSnapshot` for `GET /metrics` |
 | `ServerPortResolver` | Resolves embedded server port for loopback mock URLs |
 
 ### Configuration
@@ -163,6 +163,8 @@ sequenceDiagram
 |-------|------|
 | `AsyncConfig` | `VirtualThreadTaskExecutor` bean + `LlmTimingProperties` |
 | `RestClientConfig` | `primaryRestClient` (500 ms) and `candidateRestClient` (2000 ms) |
+| `MetricsProperties` | `metrics.store`: `memory` (per instance) or `redis` (cluster-wide) |
+| `RedisMetricsConfiguration` | Wires Redis when `metrics.store=redis` |
 
 ### Utilities & Models
 
@@ -171,7 +173,8 @@ sequenceDiagram
 | `OutputNormalizer` | Deterministic text/JSON normalization before comparison |
 | `PromptRequest` | Inbound DTO with prompt and test flags |
 | `LLMResponse` | Standard response: `request_id`, `model`, `content`, `latency_ms` |
-| `MetricsSnapshot` | Outbound metrics DTO for `GET /metrics` |
+| `MetricsSnapshot` | Outbound metrics DTO for `GET /metrics` (includes `instance_id`, `scope`) |
+| `InstanceIdentity` | Resolves container hostname for per-instance metrics attribution |
 | `MismatchLog` | Structured WARN log payload on disagreement |
 | `GlobalExceptionHandler` | Maps validation errors to RFC 7807 `ProblemDetail` |
 
@@ -253,17 +256,66 @@ Formatting-only differences (key order, case, trailing periods, extra whitespace
 
 ### `GET /metrics`
 
-`MetricsTracker` maintains in-memory counters with `AtomicLong` (no synchronized blocks):
+`MetricsTracker` delegates counter storage to a pluggable `CounterStore`:
+
+| Implementation | Config | `scope` in response | Use when |
+|----------------|--------|---------------------|----------|
+| `InMemoryCounterStore` | `metrics.store=memory` (default) | `"instance"` | Single instance / local dev |
+| `RedisCounterStore` | `metrics.store=redis` + Redis env vars | `"cluster"` | Multiple App Platform instances behind a load balancer |
+
+Counters are updated with lock-free `AtomicLong` (in-memory) or Redis `INCR` (cluster). Micrometer counters are also registered for Prometheus at `/actuator/prometheus`.
+
+#### Response fields
 
 | Field | Meaning |
 |-------|---------|
 | `total_shadow_requests` | Shadow comparisons started (candidate invoked) |
 | `matches` | Normalized outputs agreed |
 | `mismatches` | Normalized outputs disagreed |
-| `candidate_failures` | Candidate timeout or exception |
+| `candidate_failures` | Candidate timeout, circuit breaker open, or exception |
+| `shadow_skipped` | Request passed probabilistic sampling (`llm.shadow.sample-rate`) |
+| `shadow_dropped` | Concurrency limit reached; shadow work not started |
 | `real_time_match_rate` | `matches / (matches + mismatches) * 100`, or `100.0` if none compared yet |
+| `instance_id` | Hostname of the container that served this snapshot (`HOSTNAME` env, then `INSTANCE_ID`, then local hostname) |
+| `scope` | `"instance"` for per-JVM counters; `"cluster"` when backed by Redis |
 
-Metrics update **after** background shadow work completes, not when `/generate` returns.
+Metrics update **after** background shadow work completes (~500 ms candidate delay), not when `/generate` returns.
+
+#### Shadow sampling
+
+`ShadowProcessor` applies `llm.shadow.sample-rate` before invoking the candidate:
+
+- **`mock` profile (local default):** `sample-rate: 1.0` — every request is shadowed.
+- **`prod` profile:** `sample-rate: 0.1` — ~10% of requests run shadow comparison; skipped requests increment `shadow_skipped`.
+
+Override for demos: set `LLM_SHADOW_SAMPLE_RATE=1.0` or adjust `application-prod.yml`.
+
+#### Multi-instance behavior (load balancer)
+
+DigitalOcean App Platform (and any horizontal scaling) routes each HTTP request to one instance. With `metrics.store=memory`:
+
+- Each JVM maintains **independent** counters.
+- Repeated `GET /metrics` calls may return **different values** (e.g. alternating between 2 and 3) depending on which instance serves the request.
+- During rolling deploys, old and new instances briefly coexist with separate counters.
+
+**Fixes:**
+
+1. **Redis-backed metrics** — `./deploy/agent.sh` provisions a managed Redis database and sets `METRICS_STORE=redis` automatically.
+2. **Single instance** — set `instance_count: 1` in `app.yaml` and wait for deploy to finish.
+3. **Inspect attribution** — check `instance_id` in the JSON response to see which replica you hit.
+
+#### Timing example
+
+```bash
+curl -s -X POST http://localhost:8080/generate \
+  -H "Content-Type: application/json" \
+  -d '{"prompt":"async test"}'
+
+curl -s http://localhost:8080/metrics    # may show total_shadow_requests only
+
+sleep 0.8
+curl -s http://localhost:8080/metrics    # matches/mismatches updated
+```
 
 ### Logging
 
@@ -331,7 +383,11 @@ Returns current shadow comparison statistics (`MetricsSnapshot`).
   "matches": 8,
   "mismatches": 2,
   "candidate_failures": 0,
-  "real_time_match_rate": 80.0
+  "shadow_dropped": 0,
+  "shadow_skipped": 90,
+  "real_time_match_rate": 80.0,
+  "instance_id": "api-7f3a2b1c",
+  "scope": "cluster"
 }
 ```
 
@@ -346,16 +402,26 @@ Returns current shadow comparison statistics (`MetricsSnapshot`).
 
 ## Configuration
 
-All settings live in `src/main/resources/application.yml`:
+All settings live in `src/main/resources/application.yml` and profile-specific files (`application-mock.yml`, `application-prod.yml`):
 
 ```yaml
 server:
   port: ${PORT:8080}
 
 spring:
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:mock}
   threads:
     virtual:
       enabled: true
+  data:
+    redis:
+      host: ${REDIS_HOST:}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+
+metrics:
+  store: ${METRICS_STORE:memory}   # memory | redis
 
 llm:
   mock:
@@ -366,6 +432,8 @@ llm:
     candidate-ms: 2000         # RestClient connect + read timeout (candidate)
   shadow:
     enabled: true              # Set false to disable background shadow work
+    sample-rate: 1.0           # prod profile overrides to 0.1
+    max-concurrency: 100       # Drop shadow work when limit reached
 
 logging:
   level:
@@ -380,6 +448,11 @@ logging:
 | `llm.timeout.primary-ms` | 500 | Primary HTTP client budget |
 | `llm.timeout.candidate-ms` | 2000 | Candidate HTTP client budget |
 | `llm.shadow.enabled` | true | Skip candidate call and comparison when false |
+| `llm.shadow.sample-rate` | 1.0 (mock), 0.1 (prod) | Fraction of requests that run shadow comparison |
+| `llm.shadow.max-concurrency` | 100 | Max concurrent shadow tasks; excess increments `shadow_dropped` |
+| `metrics.store` | memory | `redis` aggregates counters across instances |
+| `REDIS_HOST` / `REDIS_PORT` / `REDIS_PASSWORD` | — | Required when `metrics.store=redis` |
+| `SPRING_PROFILES_ACTIVE` | mock | Set `prod` on App Platform for production defaults |
 
 ---
 
@@ -524,8 +597,14 @@ src/main/java/com/digitalocean/llmproxy/
 │   ├── ProxyOrchestrator.java     # Sync primary + schedule shadow
 │   ├── LLMMockService.java        # RestClient calls to mock endpoints
 │   ├── ShadowProcessor.java       # Async compare pipeline
-│   ├── MetricsTracker.java        # AtomicLong metrics
+│   ├── MetricsTracker.java        # CounterStore-backed shadow metrics
 │   └── ServerPortResolver.java    # Loopback port for mock URLs
+├── metrics/
+│   ├── CounterStore.java          # memory or Redis counter abstraction
+│   ├── InMemoryCounterStore.java
+│   └── RedisCounterStore.java
+├── support/
+│   └── InstanceIdentity.java      # Container hostname for metrics attribution
 └── util/
     └── OutputNormalizer.java      # Normalization pipeline
 
@@ -545,7 +624,7 @@ Dockerfile                           # Multi-stage Java 21 container
 | Safe shadow evaluation | Candidate on isolated virtual thread with separate timeout |
 | Resilience | Candidate failures never propagate to client |
 | Fair comparison | Shared normalization pipeline before equality |
-| Observable | Real-time metrics, mismatch JSON logs, optional debug tracing |
+| Observable | Real-time metrics with instance/cluster scope, mismatch JSON logs, Prometheus, optional debug tracing |
 | Testable | Integration test proves < 150 ms response under 500 ms candidate delay |
 
 ---
