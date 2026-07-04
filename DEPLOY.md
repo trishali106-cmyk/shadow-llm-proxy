@@ -90,12 +90,20 @@ APP_URL="https://shadow-llm-proxy-xxxxx.ondigitalocean.app"
 
 curl -s "$APP_URL/actuator/health"
 
-curl -s -X POST "$APP_URL/v1/chat/completions" \
+curl -s -X POST "$APP_URL/generate" \
   -H "Content-Type: application/json" \
-  -d '{"messages":[{"role":"user","content":"Hello from DO"}]}'
+  -H "X-API-Key: $PROXY_API_KEY" \
+  -d '{"prompt":"Hello from DO"}'
 
-curl -s "$APP_URL/metrics"
+# Wait for async shadow work (~500 ms), then check metrics
+sleep 1
+curl -s "$APP_URL/metrics" -H "X-API-Key: $PROXY_API_KEY"
 ```
+
+Expected metrics fields: `total_shadow_requests`, `matches`, `shadow_skipped`, `instance_id`, `scope`.
+
+- **`scope: "cluster"`** — Redis-backed totals (via `./deploy/agent.sh`).
+- **`scope: "instance"`** — Per-container counters; values may differ across repeated calls if multiple instances are running.
 
 ---
 
