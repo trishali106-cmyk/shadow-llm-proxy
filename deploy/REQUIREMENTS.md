@@ -71,6 +71,10 @@ No GitHub connection needed for this path.
 | `LLM_PRIMARY_URL` | mock endpoint | Production primary LLM URL |
 | `LLM_CANDIDATE_URL` | mock endpoint | Production candidate LLM URL |
 | `LLM_SHADOW_ENABLED` | `true` | Enable/disable shadow traffic |
+| `LLM_SHADOW_SAMPLE_RATE` | `0.1` (prod) | Fraction of requests shadowed; `1.0` for demos |
+| `SPRING_PROFILES_ACTIVE` | `prod` (agent) | Spring profile; controls sampling and security |
+| `METRICS_STORE` | `redis` (agent) | `memory` (per instance) or `redis` (cluster totals) |
+| `PROXY_API_KEY` | — | API key for `/generate` and `/metrics` in prod |
 
 ---
 
@@ -131,6 +135,8 @@ The agent saves your app ID to `deploy/.deploy-state`. Future runs of `./deploy/
 | `Git push failed` | Check `GITHUB_TOKEN` has repo scope; create repo on GitHub first |
 | App stuck in BUILDING | `doctl apps logs <APP_ID> --type build` |
 | Health check failing | Wait 2–3 min; check `/actuator/health` locally first |
+| `/metrics` values fluctuate | Multiple instances with in-memory metrics; agent deploys Redis automatically |
+| Metrics lower than request count | Expected with 10% prod sampling; set `LLM_SHADOW_SAMPLE_RATE=1.0` |
 | `GitHub not connected` | Complete one-time OAuth at DO GitHub settings link above |
 
 ---

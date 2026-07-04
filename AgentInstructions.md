@@ -21,10 +21,14 @@ This proxy must intercept incoming customer traffic, serve them synchronously us
   - Lowercase all raw text strings and strip trailing punctuation.
 
 ## 3. Real-Time Thread-Safe Metrics
-* Build an in-memory, thread-safe metrics tracker component using atomic variables (`AtomicLong`).
-* Do not use standard blocks that lock threads. Ensure low-overhead reads/writes.
-* Track: total_shadow_requests, matches, mismatches, candidate_failures, and real_time_match_rate (calculated dynamically as a percentage).
-* Expose this state instantly via a `/metrics` GET endpoint.
+* Build a thread-safe metrics tracker backed by a pluggable `CounterStore`:
+  - `InMemoryCounterStore` — lock-free `AtomicLong` per JVM (default for single instance).
+  - `RedisCounterStore` — cluster-wide totals when multiple instances sit behind a load balancer (`metrics.store=redis`).
+* Do not use synchronized blocks. Ensure low-overhead reads/writes.
+* Track: `total_shadow_requests`, `matches`, `mismatches`, `candidate_failures`, `shadow_skipped`, `shadow_dropped`, and `real_time_match_rate` (calculated dynamically as a percentage).
+* Expose snapshots via `GET /metrics` including `instance_id` (container hostname) and `scope` (`"instance"` or `"cluster"`).
+* Apply probabilistic shadow sampling via `llm.shadow.sample-rate` (100% locally, 10% in `prod` profile).
+* Metrics update after async shadow work completes, not when `/generate` returns.
 
 # Technical Implementation Details
 
@@ -38,9 +42,11 @@ Please generate or modify the project to match this layout:
 1. `config/AsyncConfig.java`: Configure Virtual Threads (`java.lang.Thread.ofVirtual()`) to handle background processing seamlessly.
 2. `model/PromptRequest.java` & `model/LLMResponse.java`: Standard DTO records or classes using Lombok.
 3. `service/LLMMockService.java`: Simulates Primary LLM (100ms artificial delay) and Candidate LLM (500ms artificial delay).
-4. `service/MetricsTracker.java`: The thread-safe manager using `AtomicLong`.
-5. `service/ShadowProcessor.java`: The asynchronous component that processes `normalizeAndCompare()`.
-6. `controller/ProxyController.java`: Exposes `@PostMapping("/generate")` and `@GetMapping("/metrics")`.
+4. `service/MetricsTracker.java`: Counter storage via `CounterStore`; exposes `MetricsSnapshot` for `/metrics`.
+5. `metrics/CounterStore.java`, `InMemoryCounterStore.java`, `RedisCounterStore.java`: Pluggable counter backends.
+6. `support/InstanceIdentity.java`: Resolves container hostname for metrics attribution.
+7. `service/ShadowProcessor.java`: The asynchronous component with sampling, concurrency limits, and `normalizeAndCompare()`.
+8. `controller/ProxyController.java`: Exposes `@PostMapping("/generate")` and `@GetMapping("/metrics")`.
 
 # Testing Strategy
 * Generate a Spring Boot Slice Test (`@WebMvcTest`) or Integration Test (`@SpringBootTest`) using `TestRestTemplate` / `WebTestClient`.

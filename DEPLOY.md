@@ -191,14 +191,52 @@ Your existing GitHub Actions CI (`.github/workflows/ci.yml`) runs tests on PRs; 
 
 ---
 
+## Metrics on App Platform
+
+Shadow metrics are **asynchronous** and **profile-dependent**:
+
+| Behavior | Local (`mock`) | Production (`prod`) |
+|----------|----------------|---------------------|
+| Shadow sample rate | 100% | 10% |
+| Metrics storage (default) | In-memory | In-memory unless Redis configured |
+| Security | Disabled | API key on `/generate`, `/metrics` |
+
+### Fluctuating `/metrics` values
+
+If repeated `curl` calls return alternating counts (e.g. 2 then 3), the load balancer is hitting **different instances**, each with its own in-memory counters.
+
+**Solutions:**
+
+1. **Deploy with the agent** (recommended) — provisions Redis and sets `METRICS_STORE=redis`:
+
+   ```bash
+   cp deploy/.env.example deploy/.env
+   ./deploy/agent.sh
+   ```
+
+   Response should show `"scope":"cluster"` with stable totals.
+
+2. **Scale to one instance** — set `instance_count: 1` in `app.yaml` and wait for rolling deploy to finish.
+
+3. **Check attribution** — `"instance_id"` in the JSON shows which container served the snapshot.
+
+### Demo mode (shadow every request)
+
+Set runtime env var `LLM_SHADOW_SAMPLE_RATE=1.0` to match local behavior.
+
+---
+
 ## Troubleshooting
 
 | Symptom | Fix |
 |---------|-----|
 | Build fails on Gradle | Check build logs: `doctl apps logs <APP_ID> --type build` |
 | Health check failing | Ensure `/actuator/health` returns 200; increase `initial_delay_seconds` in `app.yaml` |
-| 502 on chat endpoint | Verify `LLM_PRIMARY_URL` is reachable from inside the container |
+| 401 on `/generate` or `/metrics` | Set `PROXY_API_KEY` and pass `X-API-Key` header (`prod` profile) |
+| 502 on generate | Verify `LLM_PRIMARY_URL` is reachable from inside the container |
 | Shadow not comparing | Check run logs for `shadow-` thread errors; confirm `LLM_CANDIDATE_URL` |
+| Metrics bounce between values | Multiple instances + `METRICS_STORE=memory`; use Redis or single instance |
+| Metrics much lower than request count | Expected with 10% sampling; set `LLM_SHADOW_SAMPLE_RATE=1.0` for demos |
 | Out of memory | Upgrade instance size from `basic-xxs` to `basic-xs` in `app.yaml` |
 
 ---
@@ -214,4 +252,5 @@ Your existing GitHub Actions CI (`.github/workflows/ci.yml`) runs tests on PRs; 
 
 - Replace mock endpoints with real LLM URLs
 - Store API keys as **App Platform secrets** (encrypted env vars), not in `app.yaml`
-- Restrict `/metrics` behind auth or remove it from public routes if sensitive
+- Restrict `/metrics` behind auth (`PROXY_API_KEY` + `X-API-Key` header in `prod` profile)
+- Use `METRICS_STORE=redis` when running more than one instance so operators see consistent totals
