@@ -168,7 +168,7 @@ databases:
   - name: metrics-redis
     engine: REDIS
     version: "7"
-    production: true
+    production: false
 
 services:
   - name: api
@@ -228,7 +228,7 @@ databases:
   - name: metrics-redis
     engine: REDIS
     version: "7"
-    production: true
+    production: false
 
 services:
   - name: api
@@ -327,12 +327,16 @@ deploy_app() {
 
   if [[ -n "$app_id" ]]; then
     log "Updating existing app: $app_id"
-    doctl apps update "$app_id" --spec "$GENERATED_SPEC"
+    if ! doctl apps update "$app_id" --spec "$GENERATED_SPEC"; then
+      fail "App update failed. Inspect spec: $GENERATED_SPEC"
+    fi
     ok "App update triggered"
   else
     log "Creating new App Platform app: $DO_APP_NAME"
     local output
-    output=$(doctl apps create --spec "$GENERATED_SPEC" --format ID --no-header)
+    if ! output=$(doctl apps create --spec "$GENERATED_SPEC" --format ID --no-header); then
+      fail "App create failed. Inspect spec: $GENERATED_SPEC"
+    fi
     app_id=$(echo "$output" | head -1)
     ok "App created: $app_id"
   fi
@@ -348,17 +352,29 @@ wait_for_deploy() {
   local max_attempts=60
   local attempt=0
   local phase=""
+  local in_progress=""
 
   while [[ $attempt -lt $max_attempts ]]; do
-    phase=$(doctl apps get "$app_id" --format ActiveDeployment.Phase --no-header 2>/dev/null || echo "UNKNOWN")
+    in_progress=$(doctl apps get "$app_id" --format InProgressDeployment.ID --no-header 2>/dev/null || true)
+    if [[ -n "$in_progress" ]]; then
+      phase=$(doctl apps get-deployment "$app_id" "$in_progress" --format Phase --no-header 2>/dev/null || echo "UNKNOWN")
+    else
+      phase=$(doctl apps get "$app_id" --format ActiveDeployment.Phase --no-header 2>/dev/null || echo "UNKNOWN")
+    fi
 
     case "$phase" in
       ACTIVE)
         ok "Deployment is ACTIVE"
         return 0
         ;;
-      ERROR|FAILED)
-        fail "Deployment failed. Run: doctl apps logs $app_id --type build"
+      ERROR|FAILED|CANCELED)
+        fail "Deployment failed ($phase). Run: doctl apps logs $app_id --type build"
+        ;;
+      UNKNOWN)
+        if [[ -z "$in_progress" ]]; then
+          warn "No deployment in progress. If you expected one, check: doctl apps list-deployments $app_id"
+        fi
+        log "  Phase: $phase (${attempt}/${max_attempts})..."
         ;;
       *)
         log "  Phase: $phase (${attempt}/${max_attempts})..."
@@ -369,7 +385,7 @@ wait_for_deploy() {
     attempt=$((attempt + 1))
   done
 
-  warn "Deployment still in progress after timeout. Check: doctl apps get $app_id"
+  warn "Deployment still in progress after timeout. Check: doctl apps list-deployments $app_id"
 }
 
 print_result() {

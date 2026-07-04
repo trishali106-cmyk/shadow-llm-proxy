@@ -9,7 +9,7 @@ databases:
   - name: metrics-redis
     engine: REDIS
     version: "7"
-    production: true
+    production: false
 
 services:
   - name: api
