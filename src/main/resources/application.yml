@@ -1,0 +1,34 @@
+server:
+  port: ${PORT:8080}
+
+spring:
+  application:
+    name: shadow-llm-proxy
+  threads:
+    virtual:
+      enabled: true
+
+llm:
+  mock:
+    primary-delay-ms: 100
+    candidate-delay-ms: 500
+  timeout:
+    primary-ms: 500
+    candidate-ms: 2000
+  shadow:
+    enabled: true
+
+logging:
+  level:
+    com.digitalocean.llmproxy: INFO
+    com.digitalocean.llmproxy.service.ProxyOrchestrator: DEBUG
+    com.digitalocean.llmproxy.service.ShadowProcessor: DEBUG
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: when_authorized

@@ -1,0 +1,103 @@
+name: Deploy to DigitalOcean
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment target'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - production
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'deploy/**'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install doctl
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+
+      - name: Deploy to App Platform
+        env:
+          DO_APP_ID: ${{ secrets.DO_APP_ID }}
+        run: |
+          chmod +x deploy/agent.sh
+
+          # Write CI config (secrets injected, not stored in repo)
+          cat > deploy/.env <<EOF
+          DIGITALOCEAN_ACCESS_TOKEN=${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+          DEPLOY_STRATEGY=github
+          GITHUB_REPO=${{ github.repository }}
+          GITHUB_BRANCH=${{ github.ref_name }}
+          DO_APP_NAME=shadow-llm-proxy
+          DO_REGION=${{ vars.DO_REGION || 'nyc' }}
+          DO_APP_ID=${{ secrets.DO_APP_ID }}
+          LLM_PRIMARY_URL=${{ vars.LLM_PRIMARY_URL || 'http://127.0.0.1:8080/mock/primary/v1/chat/completions' }}
+          LLM_CANDIDATE_URL=${{ vars.LLM_CANDIDATE_URL || 'http://127.0.0.1:8080/mock/candidate/v1/chat/completions' }}
+          EOF
+
+          # Skip git push in CI (already on GitHub)
+          generate_spec() {
+            cat > deploy/.app.generated.yaml <<SPEC
+          name: shadow-llm-proxy
+          region: ${{ vars.DO_REGION || 'nyc' }}
+          services:
+            - name: api
+              dockerfile_path: Dockerfile
+              source_dir: /
+              github:
+                repo: ${{ github.repository }}
+                branch: ${{ github.ref_name }}
+                deploy_on_push: true
+              http_port: 8080
+              instance_count: 1
+              instance_size_slug: basic-xxs
+              health_check:
+                http_path: /actuator/health
+                initial_delay_seconds: 45
+              envs:
+                - key: PORT
+                  value: "8080"
+                  scope: RUN_TIME
+                - key: LLM_PRIMARY_URL
+                  value: "${{ vars.LLM_PRIMARY_URL || 'http://127.0.0.1:8080/mock/primary/v1/chat/completions' }}"
+                  scope: RUN_TIME
+                - key: LLM_CANDIDATE_URL
+                  value: "${{ vars.LLM_CANDIDATE_URL || 'http://127.0.0.1:8080/mock/candidate/v1/chat/completions' }}"
+                  scope: RUN_TIME
+              routes:
+                - path: /
+          SPEC
+          }
+
+          generate_spec
+
+          if [[ -n "$DO_APP_ID" ]]; then
+            doctl apps update "$DO_APP_ID" --spec deploy/.app.generated.yaml
+          else
+            doctl apps create --spec deploy/.app.generated.yaml
+          fi
+
+      - name: Print app URL
+        env:
+          DO_APP_ID: ${{ secrets.DO_APP_ID }}
+        run: |
+          APP_ID="$DO_APP_ID"
+          if [[ -z "$APP_ID" ]]; then
+            APP_ID=$(doctl apps list --format ID,Spec.Name --no-header | awk '$2=="shadow-llm-proxy"{print $1; exit}')
+          fi
+          URL=$(doctl apps get "$APP_ID" --format DefaultIngress --no-header)
+          echo "Deployed to: https://$URL"

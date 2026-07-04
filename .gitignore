@@ -1,0 +1,25 @@
+# Gradle
+.gradle/
+.gradle-local/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# IDE
+.idea/
+*.iml
+.vscode/
+*.classpath
+*.project
+.settings/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Deploy agent secrets and state
+deploy/.env
+deploy/.deploy-state
+deploy/.app.generated.yaml
